@@ -196,6 +196,10 @@ func RegisterPublicProxyRoutes(r *gin.Engine, proxy *Proxy) {
 
 	// GET /agent/download/:filename — agent package downloads (no auth, public)
 	r.GET("/agent/download/:filename", proxy.Handler())
+	// GET /agent/install-macos.sh — the macOS terminal installer, piped into
+	// bash. Public for the same reason the packages are: it runs before a
+	// machine has any credentials.
+	r.GET("/agent/install-macos.sh", proxy.Handler())
 
 	// POST /agent/logs — agents ship the MACHINE's own system logs and website
 	// activity as gzipped NDJSON batches. Public for the same reason as
@@ -322,7 +326,9 @@ func RegisterProxyRoutes(r *gin.RouterGroup, proxy *Proxy, authMiddleware gin.Ha
 	// Installed-application inventory — what software is on the fleet.
 	// Read-only: the agent reports it, the portal displays it.
 	r.GET("/machines/:id/applications", handlers...)
+	r.POST("/machines/:id/applications/scan", handlers...)
 	r.GET("/applications/catalog", handlers...)
+	r.POST("/applications/scan", handlers...)
 	r.GET("/applications/machines", handlers...)
 
 	// Application-control policies. Authored and projected only — the backend
