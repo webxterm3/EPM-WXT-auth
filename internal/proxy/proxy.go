@@ -331,14 +331,20 @@ func RegisterProxyRoutes(r *gin.RouterGroup, proxy *Proxy, authMiddleware gin.Ha
 	r.POST("/applications/scan", handlers...)
 	r.GET("/applications/machines", handlers...)
 
-	// Application-control policies. Authored and projected only — the backend
-	// keeps enforcement off for the whole of this phase.
+	// Application-control policies. Whether they are enforced or only
+	// projected is each tenant's own switch, below.
 	r.GET("/app-policies", handlers...)
 	r.POST("/app-policies", handlers...)
 	r.POST("/app-policies/simulate", handlers...)
 	r.GET("/app-policies/:id", handlers...)
 	r.PUT("/app-policies/:id", handlers...)
 	r.DELETE("/app-policies/:id", handlers...)
+
+	// The application-control enforcement switch, and the record of what
+	// endpoints did with it.
+	r.GET("/app-control/settings", handlers...)
+	r.PUT("/app-control/settings", handlers...)
+	r.GET("/app-control/events", handlers...)
 
 	// Remote-access policies: who may connect where, when, and how.
 	r.GET("/remote-access-policies", handlers...)
