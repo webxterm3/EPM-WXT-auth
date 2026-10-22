@@ -74,6 +74,21 @@ type Group struct {
 	MemberIDs   []string           `bson:"member_ids" json:"member_ids"`   // User IDs (MongoDB)
 	MachineIDs  []string           `bson:"machine_ids" json:"machine_ids"` // Machine IDs
 
+	// AdminIDs are the people who decide access requests for this group's
+	// machines.
+	//
+	// Separate from MemberIDs, and not a role on the user: being an
+	// administrator here is a property of ONE group, so the same person can
+	// approve for Finance and have to ask for Engineering. A role on the
+	// account could not express that, and a global company_admin approving
+	// everything is the thing this exists to narrow.
+	//
+	// Deliberately NOT written by the directory sync. The sync owns
+	// membership and overwrites it on every run — an approver list that came
+	// back empty after a nightly sync would send every request to nobody, and
+	// nothing would say why.
+	AdminIDs []string `bson:"admin_ids" json:"admin_ids"`
+
 	// EntraGroupID is the group's object id in Microsoft Entra, when it came
 	// from a directory. Groups are matched on it rather than on name, because
 	// a renamed group would otherwise become a second group and every policy

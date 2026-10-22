@@ -425,9 +425,9 @@ func (h *GroupsHandler) AddMember(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "Users added to group successfully",
-		"added_count":  addedCount,
-		"group":        h.groupResponse(group),
+		"message":     "Users added to group successfully",
+		"added_count": addedCount,
+		"group":       h.groupResponse(group),
 	})
 }
 
@@ -616,10 +616,10 @@ func (h *GroupsHandler) AddMachines(c *gin.Context) {
 		zap.Int("new_machines", newMachines))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "Machines added to group successfully",
-		"added_count":  newMachines,
+		"message":        "Machines added to group successfully",
+		"added_count":    newMachines,
 		"total_machines": len(group.MachineIDs),
-		"group":        h.groupResponse(group),
+		"group":          h.groupResponse(group),
 	})
 }
 
@@ -858,6 +858,7 @@ func (h *GroupsHandler) groupResponse(group *database.Group) gin.H {
 		"keycloak_id": group.KeycloakID,
 		"member_ids":  group.MemberIDs,
 		"machine_ids": group.MachineIDs,
+		"admin_ids":   group.AdminIDs,
 		"created_at":  group.CreatedAt,
 		"updated_at":  group.UpdatedAt,
 	}
@@ -868,16 +869,179 @@ func RegisterGroupsRoutes(r *gin.RouterGroup, handler *GroupsHandler, authMiddle
 	groups := r.Group("/groups")
 	groups.Use(authMiddleware) // All group routes require authentication
 	{
-		groups.GET("", handler.ListGroups)                                    // List groups
-		groups.GET("/:id", handler.GetGroup)                                  // Get group by ID
-		groups.POST("", adminMiddleware, handler.CreateGroup)                 // Create group (admin only)
-		groups.PUT("/:id", adminMiddleware, handler.UpdateGroup)              // Update group (admin only)
-		groups.DELETE("/:id", adminMiddleware, handler.DeleteGroup)           // Delete group (admin only)
-		groups.GET("/:id/members", handler.GetGroupMembers)                   // List group members
-		groups.POST("/:id/members", adminMiddleware, handler.AddMember)       // Add member (admin only)
-		groups.DELETE("/:id/members", adminMiddleware, handler.RemoveMember)  // Remove member (admin only)
-		groups.GET("/:id/machines", handler.GetGroupMachines)                 // List group machines
-		groups.POST("/:id/machines", adminMiddleware, handler.AddMachines)    // Add machines (admin only)
+		groups.GET("", handler.ListGroups)                                                 // List groups
+		groups.GET("/:id", handler.GetGroup)                                               // Get group by ID
+		groups.POST("", adminMiddleware, handler.CreateGroup)                              // Create group (admin only)
+		groups.PUT("/:id", adminMiddleware, handler.UpdateGroup)                           // Update group (admin only)
+		groups.DELETE("/:id", adminMiddleware, handler.DeleteGroup)                        // Delete group (admin only)
+		groups.GET("/:id/members", handler.GetGroupMembers)                                // List group members
+		groups.POST("/:id/members", adminMiddleware, handler.AddMember)                    // Add member (admin only)
+		groups.DELETE("/:id/members", adminMiddleware, handler.RemoveMember)               // Remove member (admin only)
+		groups.GET("/:id/machines", handler.GetGroupMachines)                              // List group machines
+		groups.POST("/:id/machines", adminMiddleware, handler.AddMachines)                 // Add machines (admin only)
 		groups.DELETE("/:id/machines/:machine_id", adminMiddleware, handler.RemoveMachine) // Remove machine (admin only)
+		groups.GET("/:id/admins", handler.GetGroupAdmins)                                  // List group approvers
+		groups.POST("/:id/admins", adminMiddleware, handler.AddGroupAdmin)                 // Add approver (admin only)
+		groups.DELETE("/:id/admins/:user_id", adminMiddleware, handler.RemoveGroupAdmin)   // Remove approver (admin only)
 	}
+}
+
+// Group administrators: the people who decide access requests for this
+// group's machines.
+//
+// Distinct from membership, which is who may USE the machines, and from the
+// company_admin role, which is a property of the account rather than of one
+// group. The point of these is that the person who knows whether somebody
+// should reach a finance laptop is not the same person who knows about an
+// engineering one — and a single global approver either rubber-stamps or
+// becomes the bottleneck.
+
+// GetGroupAdmins lists the approvers for a group.
+func (h *GroupsHandler) GetGroupAdmins(c *gin.Context) {
+	group, ok := h.groupForRequest(c)
+	if !ok {
+		return
+	}
+
+	admins := make([]gin.H, 0, len(group.AdminIDs))
+	for _, idStr := range group.AdminIDs {
+		id, err := primitive.ObjectIDFromHex(idStr)
+		if err != nil {
+			h.logger.Warn("Invalid admin ID in group", zap.String("admin_id", idStr))
+			continue
+		}
+		user, err := h.store.GetUserByID(id)
+		if err != nil {
+			// A deleted account leaves its id behind. Skipped rather than
+			// failing the list: one stale entry must not hide the approvers
+			// who do still exist.
+			h.logger.Warn("Group admin no longer exists",
+				zap.String("group_id", group.ID.Hex()), zap.String("user_id", idStr))
+			continue
+		}
+		admins = append(admins, gin.H{
+			"id":         user.ID.Hex(),
+			"username":   user.Username,
+			"email":      user.Email,
+			"first_name": user.FirstName,
+			"last_name":  user.LastName,
+			"role":       user.Role,
+			"enabled":    user.Enabled,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"admins": admins, "total": len(admins)})
+}
+
+// AddGroupAdmin makes somebody an approver for this group.
+func (h *GroupsHandler) AddGroupAdmin(c *gin.Context) {
+	group, ok := h.groupForRequest(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		UserID string `json:"user_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+	user, err := h.store.GetUserByID(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	// An approver from another tenant could approve access to machines they
+	// are not entitled to see. Checked here rather than relying on the UI to
+	// offer the right list.
+	if user.TenantID != group.TenantID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "That user belongs to a different organisation",
+		})
+		return
+	}
+
+	// Approving an access request is an administrative act, and the pages it
+	// happens on are gated on the role. Naming somebody without one creates
+	// an approver who never sees the queue — a request routed to a person for
+	// whom that screen does not exist, waiting on a decision nobody can make.
+	//
+	// Checked here and not only in the picker: a filtered dropdown is a
+	// convenience, not a boundary.
+	if user.Role != middleware.RoleCompanyAdmin && user.Role != middleware.RoleSuperAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Only an administrator can approve access requests. " +
+				"Give this person an administrator account first.",
+		})
+		return
+	}
+
+	if err := h.store.AddGroupAdmin(group.ID, req.UserID); err != nil {
+		h.logger.Error("Failed to add group admin", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add administrator"})
+		return
+	}
+
+	h.logger.Info("Group administrator added",
+		zap.String("group", group.Name), zap.String("user", user.Username))
+	c.JSON(http.StatusOK, gin.H{"message": "Administrator added"})
+}
+
+// RemoveGroupAdmin withdraws somebody's approval rights for this group.
+func (h *GroupsHandler) RemoveGroupAdmin(c *gin.Context) {
+	group, ok := h.groupForRequest(c)
+	if !ok {
+		return
+	}
+
+	userID := c.Param("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if err := h.store.RemoveGroupAdmin(group.ID, userID); err != nil {
+		h.logger.Error("Failed to remove group admin", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove administrator"})
+		return
+	}
+
+	h.logger.Info("Group administrator removed",
+		zap.String("group", group.Name), zap.String("user_id", userID))
+	c.JSON(http.StatusOK, gin.H{"message": "Administrator removed"})
+}
+
+// groupForRequest loads the group named in the path and checks the caller may
+// see it. It writes the error response itself and reports whether to continue.
+//
+// One function because the tenant check is the thing that must not be
+// forgotten on a new route, and four copies of it is three chances to leave
+// one out.
+func (h *GroupsHandler) groupForRequest(c *gin.Context) (*database.Group, bool) {
+	groupID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid group ID"})
+		return nil, false
+	}
+
+	group, err := h.store.GetGroupByID(groupID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Group not found"})
+		return nil, false
+	}
+
+	role, _ := c.Get("role")
+	tenantID, _ := c.Get("tenant_id")
+	if role != middleware.RoleSuperAdmin && group.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return nil, false
+	}
+	return group, true
 }

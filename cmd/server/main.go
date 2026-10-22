@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -259,6 +260,86 @@ func main() {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"sent": len(body.To)})
+	})
+
+	// Internal approver lookup — tells the agent backend who decides access
+	// requests for a machine, given the groups that machine is in.
+	//
+	// A call rather than a copy. The backend already holds Machine.GroupIDs,
+	// denormalised from here, and the obvious shortcut would be to push the
+	// approver list the same way. But an approver list that has drifted sends
+	// a request to somebody who no longer decides, or to nobody — and nothing
+	// about either looks wrong until an approval is waited on and never comes.
+	// Requests are made a few times a day, so asking is cheap and always
+	// right.
+	//
+	// Protected by the shared gateway secret and NOT a proxied route, like
+	// /internal/send-email beside it. Compared in constant time: a secret
+	// checked with != leaks its length and prefix to anything that can
+	// measure the reply.
+	router.POST("/internal/group-approvers", func(c *gin.Context) {
+		if subtle.ConstantTimeCompare(
+			[]byte(c.GetHeader("X-Gateway-Token")), []byte(cfg.GatewaySecret),
+		) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid gateway token"})
+			return
+		}
+
+		var body struct {
+			GroupIDs []string `json:"group_ids"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "group_ids required"})
+			return
+		}
+
+		// Deduplicated across groups: a machine in two groups administered by
+		// the same person must not mail them twice, and must not list them
+		// twice as an approver.
+		seen := map[string]bool{}
+		approvers := make([]gin.H, 0)
+
+		for _, gid := range body.GroupIDs {
+			groupID, err := primitive.ObjectIDFromHex(gid)
+			if err != nil {
+				continue
+			}
+			group, err := store.GetGroupByID(groupID)
+			if err != nil || group == nil {
+				continue
+			}
+			for _, adminID := range group.AdminIDs {
+				if seen[adminID] {
+					continue
+				}
+				uid, err := primitive.ObjectIDFromHex(adminID)
+				if err != nil {
+					continue
+				}
+				user, err := store.GetUserByID(uid)
+				if err != nil {
+					// A deleted account leaves its id behind. Skipped rather
+					// than failing the lookup: one stale entry must not hide
+					// the approvers who do still exist.
+					continue
+				}
+				// A disabled account cannot sign in, so it cannot approve.
+				// Listing it would show a request as routed to somebody who
+				// will never see it.
+				if !user.Enabled {
+					continue
+				}
+				seen[adminID] = true
+				approvers = append(approvers, gin.H{
+					"user_id":  adminID,
+					"username": user.Username,
+					"email":    user.Email,
+					"group_id": gid,
+				})
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"approvers": approvers})
 	})
 
 	// Initialize middleware functions

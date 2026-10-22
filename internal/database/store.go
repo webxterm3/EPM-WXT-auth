@@ -1131,3 +1131,59 @@ func (s *Store) UpdateAPIKeyLastUsed(id primitive.ObjectID, t time.Time) error {
 	)
 	return err
 }
+
+// AddGroupAdmin makes a user an approver for this group's machines.
+//
+// A targeted $addToSet rather than a read-modify-write of the whole group:
+// UpdateGroup does `$set: group`, so two administrators editing one group at
+// once would each write back the list as they found it and one change would
+// vanish. $addToSet is also idempotent, which matters because the UI can send
+// the same add twice on a double click.
+func (s *Store) AddGroupAdmin(groupID primitive.ObjectID, userID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.db.database.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$addToSet": bson.M{"admin_ids": userID},
+			"$set":      bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+// RemoveGroupAdmin withdraws a user's approval rights for this group.
+func (s *Store) RemoveGroupAdmin(groupID primitive.ObjectID, userID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.db.database.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$pull": bson.M{"admin_ids": userID},
+			"$set":  bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+// GroupsAdministeredBy returns the groups a user may approve access for.
+func (s *Store) GroupsAdministeredBy(userID string) ([]*Group, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := s.db.database.Collection("groups").Find(ctx, bson.M{"admin_ids": userID})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var groups []*Group
+	if err := cursor.All(ctx, &groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
