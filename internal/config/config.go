@@ -63,6 +63,11 @@ type Config struct {
 	GitHubClientID        string
 	GitHubClientSecret    string
 	OIDCRedirectBaseURL   string // public base URL of this backend (for OAuth callbacks)
+
+	// License enforcement
+	LicenseFilePath   string
+	LicensePublicKey  string
+	LicenseEncryptKey string
 }
 
 func Load() (*Config, error) {
@@ -114,6 +119,10 @@ func Load() (*Config, error) {
 		GitHubClientID:        getEnv("GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret:    getEnv("GITHUB_CLIENT_SECRET", ""),
 		OIDCRedirectBaseURL:   getEnv("OIDC_REDIRECT_BASE_URL", "http://localhost:8082"),
+
+		LicenseFilePath:   getEnv("LICENSE_FILE_PATH", ""),
+		LicensePublicKey:  getEnv("LICENSE_PUBLIC_KEY", ""),
+		LicenseEncryptKey: getEnv("LICENSE_ENCRYPT_KEY", ""),
 	}
 
 	return cfg, nil

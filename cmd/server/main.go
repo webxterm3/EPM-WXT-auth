@@ -110,6 +110,17 @@ func main() {
 		logger.Fatal("Failed to initialize Keycloak client", zap.Error(err))
 	}
 
+	// Initialize license enforcement
+	licenseService, err := services.NewLicenseService(
+		cfg.LicenseFilePath,
+		cfg.LicensePublicKey,
+		cfg.LicenseEncryptKey,
+		logger,
+	)
+	if err != nil {
+		logger.Fatal("License check failed", zap.Error(err))
+	}
+
 	// Initialize services
 	logger.Info("Initializing services...")
 	jwtService := services.NewJWTService(cfg)
@@ -140,6 +151,7 @@ func main() {
 	}
 
 	// Initialize handlers
+	licenseHandler := api.NewLicenseHandler(licenseService, logger)
 	authHandler := api.NewAuthHandler(store, kcClient, cfg, jwtService, otpService, emailService, auditService, logger)
 	usersHandler := api.NewUsersHandler(store, kcClient, emailService, logger)
 	adminHandler := api.NewAdminHandler(store, kcClient, logger)
@@ -347,12 +359,17 @@ func main() {
 	adminMiddleware := middleware.RequireAdmin(logger)
 	superAdminMiddleware := middleware.RequireSuperAdmin(logger)
 
+	// These routes are exempt from the license gate so that when the license is
+	// locked users can still authenticate (to see the license status page) and
+	// check their license state. Everything else returns 503 when locked.
+	ungatedGroup := router.Group("/api")
+	api.RegisterAuthRoutes(ungatedGroup, authHandler, authMiddleware)
+	api.RegisterLicenseRoutes(ungatedGroup, licenseHandler, authMiddleware)
+
 	// API routes
 	apiGroup := router.Group("/api")
+	apiGroup.Use(middleware.LicenseGate(licenseService, logger))
 	{
-		// Auth routes (public, except change-password which needs auth)
-		api.RegisterAuthRoutes(apiGroup, authHandler, authMiddleware)
-
 		// OIDC / Social login routes (public)
 		api.RegisterOIDCRoutes(apiGroup, oidcHandler)
 
@@ -407,6 +424,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go reconciler.Start(ctx)
+	if licenseService != nil {
+		go licenseService.Start(ctx)
+	}
 
 	// Directory sync runs on each tenant's own interval. It shares the
 	// handler's credential resolution so a scheduled run and a manual one can
