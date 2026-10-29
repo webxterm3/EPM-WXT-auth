@@ -1,4 +1,4 @@
-internal/services/license.gopackage services
+package services
 
 import (
 	"context"
