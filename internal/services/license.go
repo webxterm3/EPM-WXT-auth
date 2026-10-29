@@ -1,4 +1,4 @@
-package services
+internal/services/license.gopackage services
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,10 +52,10 @@ type LicenseInfo struct {
 // LicenseService loads, verifies, and periodically re-checks the license file.
 // It is safe for concurrent use.
 type LicenseService struct {
-	filePath string
-	pubKey   ed25519.PublicKey
-	encKey   []byte
-	logger   *zap.Logger
+	tokenInline string
+	pubKey      ed25519.PublicKey
+	encKey      []byte
+	logger      *zap.Logger
 
 	mu      sync.RWMutex
 	payload *licensePayload
@@ -64,18 +63,22 @@ type LicenseService struct {
 }
 
 // NewLicenseService creates and immediately verifies the license.
-// Returns nil (with a warning) when LICENSE_FILE_PATH is unset — dev/test mode.
-func NewLicenseService(filePath, pubKeyB64, encKeyB64 string, logger *zap.Logger) (*LicenseService, error) {
-	if filePath == "" {
-		logger.Warn("LICENSE_FILE_PATH not set — license enforcement disabled (dev mode only)")
-		return nil, nil //nolint:nilnil // intentional: nil means dev/unlicensed mode
+// licenseToken is the raw token string from LICENSE_TOKEN env var.
+// devMode must be LICENSE_DEV_MODE=only-to-run-wxt-in-dev-mode (exact string) to run without a token.
+func NewLicenseService(licenseToken, pubKeyB64, encKeyB64 string, devMode bool, logger *zap.Logger) (*LicenseService, error) {
+	if licenseToken == "" {
+		if devMode {
+			logger.Warn("LICENSE_DEV_MODE=only-to-run-wxt-in-dev-mode — license enforcement disabled. Never use in production.")
+			return nil, nil //nolint:nilnil // intentional: nil means dev mode, gate is bypassed
+		}
+		return nil, errors.New("LICENSE_TOKEN is not set — paste the token from the portal, or set LICENSE_DEV_MODE=only-to-run-wxt-in-dev-mode for local dev only")
 	}
 
 	if pubKeyB64 == "" {
-		return nil, errors.New("LICENSE_PUBLIC_KEY must be set when LICENSE_FILE_PATH is configured")
+		return nil, errors.New("LICENSE_PUBLIC_KEY must be set when LICENSE_TOKEN is configured")
 	}
 	if encKeyB64 == "" {
-		return nil, errors.New("LICENSE_ENCRYPT_KEY must be set when LICENSE_FILE_PATH is configured")
+		return nil, errors.New("LICENSE_ENCRYPT_KEY must be set when LICENSE_TOKEN is configured")
 	}
 
 	pubBytes, err := base64.StdEncoding.DecodeString(pubKeyB64)
@@ -89,10 +92,10 @@ func NewLicenseService(filePath, pubKeyB64, encKeyB64 string, logger *zap.Logger
 	}
 
 	svc := &LicenseService{
-		filePath: filePath,
-		pubKey:   ed25519.PublicKey(pubBytes),
-		encKey:   encBytes,
-		logger:   logger,
+		tokenInline: licenseToken,
+		pubKey:      ed25519.PublicKey(pubBytes),
+		encKey:      encBytes,
+		logger:      logger,
 	}
 
 	if err := svc.load(); err != nil {
@@ -141,14 +144,9 @@ func (s *LicenseService) Info() LicenseInfo {
 	}
 }
 
-// load reads the license file, verifies the Ed25519 signature + AES-256-GCM
-// encryption, then updates the in-memory state.
+// load verifies the in-memory license token and updates the state machine.
 func (s *LicenseService) load() error {
-	raw, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", s.filePath, err)
-	}
-	token := strings.TrimSpace(string(raw))
+	token := strings.TrimSpace(s.tokenInline)
 
 	p, err := verifyLicenseToken(token, s.pubKey, s.encKey)
 	if err != nil {

@@ -65,9 +65,12 @@ type Config struct {
 	OIDCRedirectBaseURL   string // public base URL of this backend (for OAuth callbacks)
 
 	// License enforcement
-	LicenseFilePath   string
+	// Set LICENSE_TOKEN to the raw token string from the portal (no file mount needed).
+	// To skip enforcement in dev, set LICENSE_DEV_MODE=only-to-run-wxt-in-dev-mode (exact string).
+	LicenseToken      string // raw token string pasted inline from the portal
 	LicensePublicKey  string
 	LicenseEncryptKey string
+	LicenseDevMode    bool // true only when LICENSE_DEV_MODE=only-to-run-wxt-in-dev-mode (exact match)
 }
 
 func Load() (*Config, error) {
@@ -120,9 +123,10 @@ func Load() (*Config, error) {
 		GitHubClientSecret:    getEnv("GITHUB_CLIENT_SECRET", ""),
 		OIDCRedirectBaseURL:   getEnv("OIDC_REDIRECT_BASE_URL", "http://localhost:8082"),
 
-		LicenseFilePath:   getEnv("LICENSE_FILE_PATH", ""),
+		LicenseToken:      getEnv("LICENSE_TOKEN", ""),
 		LicensePublicKey:  getEnv("LICENSE_PUBLIC_KEY", ""),
 		LicenseEncryptKey: getEnv("LICENSE_ENCRYPT_KEY", ""),
+		LicenseDevMode:    os.Getenv("LICENSE_DEV_MODE") == "only-to-run-wxt-in-dev-mode",
 	}
 
 	return cfg, nil
