@@ -112,9 +112,10 @@ func main() {
 
 	// Initialize license enforcement
 	licenseService, err := services.NewLicenseService(
-		cfg.LicenseFilePath,
+		cfg.LicenseToken,
 		cfg.LicensePublicKey,
 		cfg.LicenseEncryptKey,
+		cfg.LicenseDevMode,
 		logger,
 	)
 	if err != nil {
