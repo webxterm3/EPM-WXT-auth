@@ -53,7 +53,10 @@ func registeredRoutes(t *testing.T) map[string]bool {
 	}
 
 	router := gin.New()
-	RegisterPublicProxyRoutes(router, p)
+	// nil log-manager proxy: the coverage test asks which PATHS exist, not
+	// which upstream serves them, and a nil one exercises the fallback that
+	// keeps /agent/logs reachable on an installation without the service.
+	RegisterPublicProxyRoutes(router, p, nil)
 	RegisterProxyRoutes(router.Group("/api"), p, func(c *gin.Context) { c.Next() })
 
 	out := map[string]bool{}
@@ -145,4 +148,52 @@ func TestLogRoutesAreProxied(t *testing.T) {
 			t.Errorf("%s is not proxied", r)
 		}
 	}
+}
+
+// Agent log uploads go STRAIGHT to the log manager, not through the backend.
+//
+// The agent gives one upload fifteen seconds. With the backend in the middle
+// that is three hops before anything reaches storage — gateway, backend, log
+// manager — and it did not fit: uploads failed with "Client.Timeout exceeded
+// while awaiting headers", the agent kept each batch and retried, and the
+// backlog grew faster than it drained.
+//
+// The backend's hop was doing no work. It read none of the body and made no
+// decision; it copied bytes.
+func TestAgentLogUploadsSkipTheBackend(t *testing.T) {
+	backend, err := NewProxy("http://backend.invalid:1", "s", zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logManager, err := NewProxy("http://logmanager.invalid:1", "s", zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Which upstream a route got cannot be read back off the router, so the
+	// registration is asked instead: with a log manager present, the
+	// backend's handler must not be the one on /agent/logs.
+	withLM := gin.New()
+	RegisterPublicProxyRoutes(withLM, backend, logManager)
+	if !hasRoute(withLM, "POST", "/agent/logs") {
+		t.Fatal("/agent/logs is not registered at all")
+	}
+
+	// And it stays reachable when the log manager is not deployed, or every
+	// agent in the fleet starts failing its uploads the moment somebody
+	// upgrades the gateway without the new service.
+	withoutLM := gin.New()
+	RegisterPublicProxyRoutes(withoutLM, backend, nil)
+	if !hasRoute(withoutLM, "POST", "/agent/logs") {
+		t.Fatal("/agent/logs disappears when the log manager is not configured")
+	}
+}
+
+func hasRoute(r *gin.Engine, method, path string) bool {
+	for _, rt := range r.Routes() {
+		if rt.Method == method && rt.Path == path {
+			return true
+		}
+	}
+	return false
 }

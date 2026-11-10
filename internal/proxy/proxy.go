@@ -181,7 +181,7 @@ func (p *Proxy) HealthCheckHandler() gin.HandlerFunc {
 
 // RegisterPublicProxyRoutes registers backend routes that do NOT require JWT auth.
 // These are root-level routes on the backend (no /api prefix) with their own auth mechanism.
-func RegisterPublicProxyRoutes(r *gin.Engine, proxy *Proxy) {
+func RegisterPublicProxyRoutes(r *gin.Engine, proxy, logProxy *Proxy) {
 	// GET /server-cert — agents download server cert for TLS pinning (self-signed setups)
 	r.GET("/server-cert", proxy.Handler())
 
@@ -204,9 +204,28 @@ func RegisterPublicProxyRoutes(r *gin.Engine, proxy *Proxy) {
 	// POST /agent/logs — agents ship the MACHINE's own system logs and website
 	// activity as gzipped NDJSON batches. Public for the same reason as
 	// sign-cert: the caller is an agent holding its registration token, not a
-	// portal user with a session. The backend authenticates that token and
-	// rejects revoked machines.
-	r.POST("/agent/logs", proxy.Handler())
+	// portal user with a session. The log manager authenticates that token
+	// and rejects revoked machines.
+	//
+	// Sent STRAIGHT to the log manager, not through the backend.
+	//
+	// The backend can forward these and does, for agents enrolled against it
+	// directly. But an agent enrolled against this gateway would then make
+	// three hops before anything reaches storage — gateway, backend, log
+	// manager — inside the fifteen seconds the agent gives one upload. It
+	// did not fit: uploads timed out with "Client.Timeout exceeded while
+	// awaiting headers", the agent kept the batch and retried, and the
+	// backlog grew faster than it drained.
+	//
+	// Nothing on the backend's hop was doing any work. It read none of the
+	// body and made no decision; it only copied bytes. Taking it out
+	// restores the hop count the fleet had before log collection moved, and
+	// leaves the backend out of a path it has no part in.
+	if logProxy != nil {
+		r.POST("/agent/logs", logProxy.Handler())
+	} else {
+		r.POST("/agent/logs", proxy.Handler())
+	}
 
 	// NOTE: /grpc-mode is registered directly in main.go with its own fallback logic
 }
@@ -363,10 +382,12 @@ func RegisterProxyRoutes(r *gin.RouterGroup, proxy *Proxy, authMiddleware gin.Ha
 	// S3 / tenant configuration routes
 	r.GET("/config/s3", handlers...)
 	r.POST("/config/s3", handlers...)
+	r.POST("/config/s3/test", handlers...)
 
 	// Endpoint log collection — the tenant-wide policy for shipping each
-	// MACHINE's own system logs and website activity. Distinct from the
-	// /log-management routes below, which govern the portal's own logs.
+	// MACHINE's own system logs and website activity. Still the backend's,
+	// because it is a setting the agents are given; the ARCHIVE of what
+	// they ship, and of the portal's own logs, belongs to wxt-log-manager.
 	r.GET("/config/log-shipping", handlers...)
 	r.POST("/config/log-shipping", handlers...)
 
@@ -382,13 +403,18 @@ func RegisterProxyRoutes(r *gin.RouterGroup, proxy *Proxy, authMiddleware gin.Ha
 	r.GET("/machines/:id/update-check", handlers...)
 	r.POST("/machines/:id/update", handlers...)
 
-	// Log management routes
-	r.GET("/log-management/config", handlers...)
-	r.POST("/log-management/config", handlers...)
-	r.POST("/log-management/test-connection", handlers...)
-	r.POST("/log-management/archive-now", handlers...)
-	r.GET("/log-management/runs", handlers...)
-	r.POST("/log-management/runs/:run_id/restore", handlers...)
+	// Ask one machine to ship its system logs now. The backend owns this —
+	// it holds the gRPC stream to the agent — while READING what was shipped
+	// belongs to wxt-log-manager.
+	// ":id", not ":agent_id". Gin refuses two different wildcard names at
+	// the same position and PANICS AT STARTUP — the gateway would not come
+	// up at all. The name here is the proxy's; the backend reads its own.
+	r.POST("/machines/:id/logs/ship-now", handlers...)
+
+	// Log management has MOVED to wxt-log-manager — see
+	// RegisterLogManagerProxyRoutes. Not duplicated here: Gin panics on a
+	// second registration of the same path, so leaving these behind would
+	// have stopped the gateway starting at all.
 
 	// Access request routes
 	r.POST("/access-requests", handlers...)
@@ -419,4 +445,61 @@ func (w *CustomResponseWriter) Write(b []byte) (int, error) {
 func (w *CustomResponseWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// NewLogManagerProxy builds the proxy to wxt-log-manager.
+//
+// Optional in the same way the tunnel is: an installation that has not
+// deployed the log service should run with the feature switched off rather
+// than fail to start, because every other part of the console is unaffected
+// by its absence.
+func NewLogManagerProxy(logManagerURL string, gatewaySecret string, logger *zap.Logger) (*Proxy, error) {
+	if logManagerURL == "" {
+		return nil, nil
+	}
+	return NewProxy(logManagerURL, gatewaySecret, logger)
+}
+
+// logManagerDisabledHandler explains the 503 rather than returning a bare one.
+//
+// The alternative reads as a broken feature. This is a feature that has not
+// been deployed, and the difference matters to whoever is looking at it:
+// one is a bug report, the other is a line in a configuration file.
+func logManagerDisabledHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(503, gin.H{"error": "log manager service not configured — " +
+			"set WXT_LOG_MANAGER_URL in vsay-auth to enable endpoint log " +
+			"viewing and log retention"})
+	}
+}
+
+// RegisterLogManagerProxyRoutes registers the endpoint-log routes.
+//
+// Behind authMiddleware like everything else, which is what populates the
+// identity headers the log service reads. Registered even when the service
+// is absent, so the console gets a 503 that says why instead of a 404 that
+// looks like a missing route.
+func RegisterLogManagerProxyRoutes(r *gin.RouterGroup, logProxy *Proxy, authMiddleware gin.HandlerFunc) {
+	// Retention moved here from vsay-agent-backend along with the service
+	// that performs it. The PATHS are unchanged, so the console sends the
+	// same requests it always did and only the upstream differs.
+	routes := []struct {
+		method, path string
+	}{
+		{"GET", "/logs/endpoint"},
+		{"GET", "/log-management/config"},
+		{"POST", "/log-management/config"},
+		{"GET", "/log-management/runs"},
+		{"POST", "/log-management/test-connection"},
+		{"POST", "/log-management/archive-now"},
+		{"POST", "/log-management/runs/:run_id/restore"},
+	}
+
+	handler := logManagerDisabledHandler()
+	if logProxy != nil {
+		handler = logProxy.Handler()
+	}
+	for _, rt := range routes {
+		r.Handle(rt.method, rt.path, authMiddleware, handler)
+	}
 }

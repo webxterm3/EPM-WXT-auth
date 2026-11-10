@@ -29,6 +29,10 @@ type Config struct {
 	// Backend Services
 	VsayAgentBackendURL string
 	VsayTunnelURL       string // optional — if empty, /api/deployments/* returns 503
+	// WxtLogManagerURL is wxt-log-manager. Optional: if empty,
+	// /api/logs/endpoint returns a 503 that says the service is not
+	// deployed, rather than a 404 that reads as a missing feature.
+	WxtLogManagerURL string
 	GatewaySecret       string
 
 	// JWT
@@ -94,6 +98,7 @@ func Load() (*Config, error) {
 
 		VsayAgentBackendURL: getEnv("VSAY_AGENT_BACKEND_URL", "http://localhost:8082"),
 		VsayTunnelURL:       getEnv("VSAY_TUNNEL_URL", ""),
+		WxtLogManagerURL:    getEnv("WXT_LOG_MANAGER_URL", ""),
 		GatewaySecret:       getEnv("GATEWAY_SECRET", "change-this-secret-in-production"),
 
 		JWTSecret:      getEnv("JWT_SECRET", "your-super-secret-jwt-key"),

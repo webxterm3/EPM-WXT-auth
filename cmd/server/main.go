@@ -151,6 +151,21 @@ func main() {
 		logger.Info("VSAY_TUNNEL_URL not set — deploy-applications feature is disabled")
 	}
 
+	// Initialize proxy to wxt-log-manager (optional)
+	var logManagerProxyService *proxy.Proxy
+	if cfg.WxtLogManagerURL != "" {
+		logger.Info("Initializing log manager proxy...",
+			zap.String("log_manager_url", cfg.WxtLogManagerURL))
+		logManagerProxyService, err = proxy.NewLogManagerProxy(
+			cfg.WxtLogManagerURL, cfg.GatewaySecret, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize log manager proxy (endpoint log viewing disabled)",
+				zap.Error(err))
+		}
+	} else {
+		logger.Info("WXT_LOG_MANAGER_URL not set — endpoint log viewing is disabled")
+	}
+
 	// Initialize handlers
 	licenseHandler := api.NewLicenseHandler(licenseService, logger)
 	authHandler := api.NewAuthHandler(store, kcClient, cfg, jwtService, otpService, emailService, auditService, logger)
@@ -223,7 +238,7 @@ func main() {
 	})
 
 	// Public backend routes (no JWT auth — these have their own auth or are public)
-	proxy.RegisterPublicProxyRoutes(router, proxyService)
+	proxy.RegisterPublicProxyRoutes(router, proxyService, logManagerProxyService)
 
 	// gRPC mode endpoint — proxies to backend to get the actual mTLS setting
 	router.GET("/grpc-mode", func(c *gin.Context) {
@@ -409,6 +424,7 @@ func main() {
 
 		// Tunnel routes — proxied to vsay-tunnel if configured, otherwise returns 503
 		proxy.RegisterTunnelProxyRoutes(apiGroup, tunnelProxyService, authMiddleware)
+		proxy.RegisterLogManagerProxyRoutes(apiGroup, logManagerProxyService, authMiddleware)
 	}
 
 	// Setup super admin on startup
