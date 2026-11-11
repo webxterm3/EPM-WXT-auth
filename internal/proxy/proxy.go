@@ -350,6 +350,32 @@ func RegisterProxyRoutes(r *gin.RouterGroup, proxy *Proxy, authMiddleware gin.Ha
 	r.POST("/applications/scan", handlers...)
 	r.GET("/applications/machines", handlers...)
 
+	// Local-account inventory — who holds administrator rights on the fleet.
+	// Read-only, like the software inventory above: nothing here changes an
+	// account on any endpoint.
+	r.GET("/machines/:id/accounts", handlers...)
+	r.POST("/machines/:id/accounts/scan", handlers...)
+	r.POST("/machines/:id/accounts", handlers...)
+	r.POST("/machines/:id/account-action", handlers...)
+	r.GET("/accounts", handlers...)
+
+	// Least-privilege policies, with their own enforcement switch.
+	r.GET("/privilege-policies", handlers...)
+	r.POST("/privilege-policies", handlers...)
+	r.POST("/privilege-policies/simulate", handlers...)
+	r.GET("/privilege-policies/:id", handlers...)
+	r.PUT("/privilege-policies/:id", handlers...)
+	r.DELETE("/privilege-policies/:id", handlers...)
+	// Fleet-wide configuration. Super administrator only, enforced by the
+	// backend — this gateway proxies, it does not decide.
+	r.GET("/fleet-config", handlers...)
+	r.PUT("/fleet-config", handlers...)
+	r.POST("/fleet-config/upgrade-agents", handlers...)
+	r.POST("/fleet-config/apply-default-user", handlers...)
+
+	r.GET("/privilege-control/settings", handlers...)
+	r.PUT("/privilege-control/settings", handlers...)
+
 	// Application-control policies. Whether they are enforced or only
 	// projected is each tenant's own switch, below.
 	r.GET("/app-policies", handlers...)

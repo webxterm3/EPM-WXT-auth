@@ -33,7 +33,7 @@ type Config struct {
 	// /api/logs/endpoint returns a 503 that says the service is not
 	// deployed, rather than a 404 that reads as a missing feature.
 	WxtLogManagerURL string
-	GatewaySecret       string
+	GatewaySecret    string
 
 	// JWT
 	JWTSecret      string
