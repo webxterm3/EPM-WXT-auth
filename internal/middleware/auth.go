@@ -119,6 +119,14 @@ func AuthMiddleware(jwtService *services.JWTService, store *database.Store, logg
 			zap.String("role", claims.Role),
 			zap.String("source", claims.Source))
 
+		// A viewer may read and nothing else. Checked here, once, rather than
+		// per handler: see readonly.go. Every authenticated route in the
+		// product passes through this function, which is the only reason the
+		// rule can be trusted.
+		if !GuardReadOnly(c, claims.Role, logger) {
+			return
+		}
+
 		c.Next()
 	}
 }
@@ -196,6 +204,13 @@ func authenticateAPIKey(c *gin.Context, store *database.Store, rawKey string, lo
 	logger.Debug("User authenticated via API key",
 		zap.String("username", user.Username),
 		zap.String("role", user.Role))
+
+	// An API key carries its owner's role, so a viewer's key is read-only too.
+	// Without this the role would be a property of the browser session rather
+	// than of the account, and the way around it would be to make a key.
+	if !GuardReadOnly(c, user.Role, logger) {
+		return
+	}
 
 	c.Next()
 }

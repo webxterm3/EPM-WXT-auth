@@ -276,12 +276,7 @@ func (s *Syncer) createUser(settings *database.EntraSyncSettings, du graph.User,
 		return nil, err
 	}
 
-	role := settings.DefaultRole
-	if role != database.RoleCompanyAdmin && role != database.RoleSuperAdmin {
-		// Anything unrecognised becomes an ordinary user. A typo in a settings
-		// field must never mint administrators.
-		role = "user"
-	}
+	role := resolveDefaultRole(settings.DefaultRole)
 
 	kcID, err := s.kc.CreateUser(settings.TenantID, username, email, password,
 		du.GivenName, du.Surname, []string{role})
@@ -508,4 +503,29 @@ func (s *Syncer) upsertGroup(tenantID string, dg graph.Group, members []string) 
 	// MachineIDs are left untouched — which machines a group covers is a local
 	// decision this product makes, not something Entra knows about.
 	return false, s.store.UpdateGroup(existing)
+}
+
+// resolveDefaultRole decides what a directory-synced account is created as.
+//
+// Anything unrecognised becomes a VIEWER, not a user. A typo in a settings
+// field must never mint administrators, and it must not quietly mint people
+// who can act either.
+//
+// Viewer rather than user is the whole point of the default. A sync brings in
+// everybody an organisation employs, including the people who will never open
+// this product, and whatever they land as is what the estate is exposed to
+// until somebody reviews a list they did not ask for. Arriving able to see and
+// not to act makes that review something an administrator does when they get
+// to it, rather than something that has to happen before the next sync runs.
+//
+// The role is applied at CREATION only. Somebody promoted afterwards keeps
+// the role they were given.
+func resolveDefaultRole(configured string) string {
+	switch configured {
+	case database.RoleViewer, database.RoleUser,
+		database.RoleCompanyAdmin, database.RoleSuperAdmin:
+		return configured
+	default:
+		return database.RoleViewer
+	}
 }

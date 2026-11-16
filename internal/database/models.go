@@ -11,6 +11,10 @@ const (
 	RoleSuperAdmin   = "super_admin"
 	RoleCompanyAdmin = "company_admin"
 	RoleUser         = "user"
+	// RoleViewer sees what an ordinary user sees and changes nothing. It is
+	// what directory-synced accounts get until an administrator says
+	// otherwise — see middleware/readonly.go for how it is enforced.
+	RoleViewer = "viewer"
 )
 
 // User represents a user stored in MongoDB (synced with Keycloak)

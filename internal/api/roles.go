@@ -70,6 +70,20 @@ var portalRoles = []RoleDefinition{
 		},
 	},
 	{
+		ID:          middleware.RoleViewer,
+		Name:        "viewer",
+		DisplayName: "Viewer",
+		Description: "Sees everything a standard user sees and changes nothing. " +
+			"Cannot run commands, open a terminal or a remote desktop, approve requests, " +
+			"or edit any policy or setting. This is the role directory-synced accounts " +
+			"are created with until an administrator changes it.",
+		Type: "portal",
+		Permissions: []string{
+			"view_assigned_machines",
+			"view_own_profile",
+		},
+	},
+	{
 		ID:          middleware.RoleUser,
 		Name:        "user",
 		DisplayName: "User",
@@ -295,10 +309,10 @@ func (h *RolesHandler) GetUserRoles(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":       user.ID.Hex(),
-		"username":      user.Username,
-		"portal_role":   portalRoleDef,
-		"machine_role":  machineRoleDef,
+		"user_id":      user.ID.Hex(),
+		"username":     user.Username,
+		"portal_role":  portalRoleDef,
+		"machine_role": machineRoleDef,
 	})
 }
 

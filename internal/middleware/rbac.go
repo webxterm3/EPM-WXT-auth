@@ -11,6 +11,7 @@ const (
 	RoleSuperAdmin   = "super_admin"
 	RoleCompanyAdmin = "company_admin"
 	RoleUser         = "user"
+	// RoleViewer is declared in readonly.go, next to what it means.
 )
 
 // RequireSuperAdmin checks if user has super admin role

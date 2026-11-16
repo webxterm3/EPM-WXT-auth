@@ -87,7 +87,8 @@ func (h *EntraSyncHandler) GetSettings(c *gin.Context) {
 	}
 	if settings == nil {
 		settings = &database.EntraSyncSettings{
-			TenantID: tenantID, SyncUsers: true, SyncGroups: true, DefaultRole: "user",
+			TenantID: tenantID, SyncUsers: true, SyncGroups: true,
+			DefaultRole: database.RoleViewer,
 		}
 	}
 
@@ -157,10 +158,18 @@ func (h *EntraSyncHandler) SaveSettings(c *gin.Context) {
 	}
 
 	role := body.DefaultRole
-	if role != database.RoleCompanyAdmin {
-		// Only ordinary users and company admins can be provisioned. A super
-		// admin is a deliberate, manual act, never a directory side effect.
-		role = "user"
+	switch role {
+	case database.RoleCompanyAdmin, database.RoleUser, database.RoleViewer:
+		// Chosen deliberately. A super admin is never among them: that is a
+		// manual act, never a directory side effect.
+	default:
+		// Viewer, not user, for anything unrecognised.
+		//
+		// A sync brings in the whole directory, including everybody who will
+		// never open this product. Whatever they land as is what the estate is
+		// exposed to until somebody reviews a list they did not ask for, and
+		// an unset or mistyped field should not be what decides that.
+		role = database.RoleViewer
 	}
 
 	settings := &database.EntraSyncSettings{

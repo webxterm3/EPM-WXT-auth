@@ -7,6 +7,10 @@ const (
 	RoleSuperAdmin   = "super_admin"
 	RoleCompanyAdmin = "company_admin"
 	RoleUser         = "user"
+	// RoleViewer sees what an ordinary user sees and changes nothing. It is
+	// what directory-synced accounts get until an administrator says
+	// otherwise — see middleware/readonly.go for how it is enforced.
+	RoleViewer = "viewer"
 )
 
 // Machine roles
@@ -17,19 +21,19 @@ const (
 
 // User represents a user in the system
 type User struct {
-	ID             string    `json:"id"`
-	Username       string    `json:"username"`
-	Email          string    `json:"email"`
-	FirstName      string    `json:"first_name,omitempty"`
-	LastName       string    `json:"last_name,omitempty"`
-	Role           string    `json:"role"`
-	TenantID       string    `json:"tenant_id"`       // Keycloak realm/tenant
-	TenantName     string    `json:"tenant_name"`     // Company/Organization name
-	Groups         []string  `json:"groups"`
-	EmailVerified  bool      `json:"email_verified"`
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Username      string    `json:"username"`
+	Email         string    `json:"email"`
+	FirstName     string    `json:"first_name,omitempty"`
+	LastName      string    `json:"last_name,omitempty"`
+	Role          string    `json:"role"`
+	TenantID      string    `json:"tenant_id"`   // Keycloak realm/tenant
+	TenantName    string    `json:"tenant_name"` // Company/Organization name
+	Groups        []string  `json:"groups"`
+	EmailVerified bool      `json:"email_verified"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Organization represents a company/tenant
@@ -45,12 +49,12 @@ type Organization struct {
 
 // Group represents a group of users within an organization
 type Group struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	TenantID    string   `json:"tenant_id"`
-	Members     []string `json:"members"`      // User IDs
-	Machines    []string `json:"machines"`     // Machine IDs
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	TenantID    string    `json:"tenant_id"`
+	Members     []string  `json:"members"`  // User IDs
+	Machines    []string  `json:"machines"` // Machine IDs
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

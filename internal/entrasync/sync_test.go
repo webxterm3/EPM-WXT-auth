@@ -279,8 +279,16 @@ func TestLocalRolePromotionSurvivesASync(t *testing.T) {
 	}
 }
 
-// A typo in a settings field must never mint administrators.
-func TestUnknownDefaultRoleBecomesAnOrdinaryUser(t *testing.T) {
+// A typo in a settings field must never mint administrators — and must not
+// quietly mint people who can act either.
+//
+// This used to assert "user", which was the safe answer to the first half of
+// that sentence and not to the second. A directory sync brings in everybody
+// an organisation employs, so whatever an unset or mistyped field produces is
+// what the estate is exposed to until somebody reviews a list they did not ask
+// for. Viewer makes that review something an administrator does when they get
+// to it.
+func TestUnknownDefaultRoleBecomesAViewer(t *testing.T) {
 	store := &fakeStore{}
 	cfg := settings()
 	cfg.DefaultRole = "administrator" // not a real role in this system
@@ -291,8 +299,26 @@ func TestUnknownDefaultRoleBecomesAnOrdinaryUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := store.userByEmail("a@x.com").Role; got != "user" {
-		t.Errorf("Role = %q, want user", got)
+	if got := store.userByEmail("a@x.com").Role; got != database.RoleViewer {
+		t.Errorf("Role = %q, want %q", got, database.RoleViewer)
+	}
+}
+
+// And a role an administrator actually chose is honoured, so the default
+// above is a default rather than a ceiling.
+func TestAChosenDefaultRoleIsUsedForNewAccounts(t *testing.T) {
+	store := &fakeStore{}
+	cfg := settings()
+	cfg.DefaultRole = database.RoleUser
+
+	dir := &fakeDirectory{users: []graph.User{{ID: "o1", Mail: "a@x.com", AccountEnabled: true}}}
+	if _, err := newSyncer(store, &fakeKeycloak{taken: map[string]bool{}}).
+		Run(context.Background(), cfg, dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := store.userByEmail("a@x.com").Role; got != database.RoleUser {
+		t.Errorf("Role = %q, want %q", got, database.RoleUser)
 	}
 }
 
